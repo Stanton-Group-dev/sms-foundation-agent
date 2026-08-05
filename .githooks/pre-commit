@@ -25,4 +25,22 @@ if [ $status -ne 0 ]; then
   exit 1
 fi
 
+
+# GUARDRAIL: check-localhost-fallback (propagated — do not hand-edit this block)
+staged_source=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx|js|jsx)$')
+if [ -n "$staged_source" ]; then
+  hook_dir=$(dirname "$0")
+  checker="$hook_dir/check-localhost-fallback.mjs"
+  if [ -f "$checker" ]; then
+    localhost_hits=$(node "$checker" $staged_source)
+    if [ -n "$localhost_hits" ]; then
+      echo "⚠  possible unguarded localhost fallback (this bug class has shipped to prod 3x):"
+      echo "$localhost_hits" | sed 's/^/   /'
+    fi
+  else
+    echo "⚠  localhost-fallback checker not found at $checker — guardrail is not active in this repo (run scripts/propagate-guardrail.mjs from stanton-control to install it)."
+  fi
+fi
+# END GUARDRAIL
+
 exit 0
