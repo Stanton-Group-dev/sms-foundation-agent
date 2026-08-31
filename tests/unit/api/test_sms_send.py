@@ -49,8 +49,12 @@ def session_maker(test_engine):
     return async_sessionmaker(test_engine, expire_on_commit=False)
 
 
+API_KEY = "test-key"
+AUTH_HEADERS = {"x-api-key": API_KEY}
+
+
 @pytest.fixture(autouse=True)
-def override_deps(session_maker):
+def override_deps(session_maker, monkeypatch):
     # DB dependency
     async def _dep():
         async with session_maker() as session:  # type: ignore[misc]
@@ -61,25 +65,51 @@ def override_deps(session_maker):
     app.dependency_overrides[db_base.get_session] = _dep
     # Twilio dependency defaults to success
     app.dependency_overrides[get_twilio_client] = lambda: _FakeTwilio("SM-OK")
+    monkeypatch.setenv("SMS_API_KEY", API_KEY)
     yield
     app.dependency_overrides.clear()
 
 
 def test_send_validation_empty_body():
     client = TestClient(app)
-    res = client.post("/sms/send", json={"to": "+15555550123", "body": "   "})
+    res = client.post("/sms/send", json={"to": "+15555550123", "body": "   "}, headers=AUTH_HEADERS)
     assert res.status_code == 400
 
 
 def test_send_validation_bad_phone():
     client = TestClient(app)
-    res = client.post("/sms/send", json={"to": "123", "body": "hello"})
+    res = client.post("/sms/send", json={"to": "123", "body": "hello"}, headers=AUTH_HEADERS)
     assert res.status_code == 400
+
+
+def test_send_wrong_api_key_returns_401():
+    client = TestClient(app)
+    res = client.post(
+        "/sms/send",
+        json={"to": "+15555550123", "body": "hello"},
+        headers={"x-api-key": "wrong-key"},
+    )
+    assert res.status_code == 401
+
+
+def test_send_missing_api_key_returns_401():
+    client = TestClient(app)
+    res = client.post("/sms/send", json={"to": "+15555550123", "body": "hello"})
+    assert res.status_code == 401
+
+
+def test_send_unset_sms_api_key_env_returns_503(monkeypatch):
+    monkeypatch.delenv("SMS_API_KEY", raising=False)
+    client = TestClient(app)
+    res = client.post("/sms/send", json={"to": "+15555550123", "body": "hello"}, headers=AUTH_HEADERS)
+    assert res.status_code == 503
 
 
 def test_send_happy_path_creates_and_updates(session_maker):
     client = TestClient(app)
-    res = client.post("/sms/send", json={"to": "+1 (555) 555-0199", "body": "Hello there"})
+    res = client.post(
+        "/sms/send", json={"to": "+1 (555) 555-0199", "body": "Hello there"}, headers=AUTH_HEADERS
+    )
     assert res.status_code == 202
     data = res.json()
     assert "id" in data and data["id"]
@@ -103,7 +133,9 @@ def test_send_provider_error_sets_failed_and_returns_502(session_maker):
     # Override Twilio to fail
     app.dependency_overrides[get_twilio_client] = lambda: _FakeTwilio(should_fail=True)
     client = TestClient(app)
-    res = client.post("/sms/send", json={"to": "+15555550155", "body": "Hello"})
+    res = client.post(
+        "/sms/send", json={"to": "+15555550155", "body": "Hello"}, headers=AUTH_HEADERS
+    )
     assert res.status_code == 502
 
     async def _check():

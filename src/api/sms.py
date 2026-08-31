@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hmac
+import os
 import uuid
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +19,18 @@ from src.utils.config import Settings, get_settings
 
 router = APIRouter(prefix="/sms", tags=["sms"])
 logger = structlog.get_logger(__name__)
+
+
+async def require_send_api_key(x_api_key: Optional[str] = Header(None, alias="x-api-key")) -> None:
+    """Fail-closed gate for outbound-send routes.
+
+    SMS_API_KEY unset -> 503 (send disabled). Present and mismatched/missing -> 401.
+    """
+    expected = os.environ.get("SMS_API_KEY")
+    if not expected:
+        raise HTTPException(status_code=503, detail="send disabled: SMS_API_KEY not configured")
+    if not x_api_key or not hmac.compare_digest(x_api_key, expected):
+        raise HTTPException(status_code=401, detail="invalid api key")
 
 
 class SendSmsRequest(BaseModel):
@@ -40,7 +54,12 @@ def get_twilio_client(settings: Settings = Depends(get_settings)) -> TwilioClien
     return TwilioClient(cfg)
 
 
-@router.post("/send", status_code=status.HTTP_202_ACCEPTED, response_model=SendSmsResponse)
+@router.post(
+    "/send",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=SendSmsResponse,
+    dependencies=[Depends(require_send_api_key)],
+)
 async def send_sms(
     payload: SendSmsRequest,
     request: Request,

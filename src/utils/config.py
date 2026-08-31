@@ -3,8 +3,22 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def normalize_database_url(url: str) -> str:
+    """Rewrite a driverless postgres(ql):// URL to use asyncpg.
+
+    Railway supplies plain postgres:// / postgresql:// URLs; SQLAlchemy's async
+    engine needs an explicit driver. Any other scheme (sqlite+aiosqlite://,
+    already-qualified postgresql+asyncpg://, etc.) passes through unchanged.
+    """
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://") :]
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://") :]
+    return url
 
 
 class Settings(BaseSettings):
@@ -21,6 +35,12 @@ class Settings(BaseSettings):
     twilio_phone_number: str = Field(default="", alias="TWILIO_PHONE_NUMBER")
     # Database URL for async SQLAlchemy engine. Default to local SQLite file for dev/test.
     database_url: str = Field(default="sqlite+aiosqlite:///./app.db", alias="DATABASE_URL")
+
+    @field_validator("database_url")
+    @classmethod
+    def _normalize_database_url(cls, v: str) -> str:
+        return normalize_database_url(v)
+
     # Collections Monitor base URL for tenant lookup
     monitor_api_url: str = Field(default="", alias="MONITOR_API_URL")
     # Tenant Profile base URL for updating language preferences

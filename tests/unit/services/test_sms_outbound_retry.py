@@ -62,6 +62,7 @@ async def test_transient_then_success_retries(async_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_permanent_error_no_retries_returns_api_error(monkeypatch):
+    monkeypatch.setenv("SMS_API_KEY", "test-key")
     app = create_app()
 
     # Override Twilio client dependency to use the permanent failing client
@@ -98,6 +99,7 @@ async def test_permanent_error_no_retries_returns_api_error(monkeypatch):
         resp = await client.post(
             "/sms/send",
             json={"to": "+15555550123", "body": "Hi"},
+            headers={"x-api-key": "test-key"},
         )
     assert resp.status_code == 400
     data = resp.json()
