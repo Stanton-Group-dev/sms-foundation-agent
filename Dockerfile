@@ -26,5 +26,8 @@ COPY src ./src
 COPY alembic.ini ./
 COPY alembic ./alembic
 EXPOSE 8000
-CMD ["uvicorn", "src.main:app", "--host", "::", "--port", "8000"]
+# Shell form on purpose: migrations must run before the server, and Railway's
+# public edge connects over IPv4 — bind 0.0.0.0, not :: (three healthy [::]
+# boots answered every public request with 502 on 2026-08-30).
+CMD alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000
 
